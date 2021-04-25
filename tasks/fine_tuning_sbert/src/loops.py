@@ -114,7 +114,7 @@ def grid_search_fine_tune_sbert(train_params, train_sents, train_labels, test_se
         for wup in warmUpSteps:
 
             # Loop to run the model training process several times to explore the optimization landscape
-            for rep in range(1, nReplicas + 1):
+            for rep in range(1, nReplicas[0] + 1):
                 for model_name in model_names:
                     # Train set config
                     model = EarlyStoppingSentenceTransformer(model_name)
@@ -141,7 +141,7 @@ def grid_search_fine_tune_sbert(train_params, train_sents, train_labels, test_se
                     dev_evaluator = CustomLabelAccuracyEvaluator(dataloader=dev_dataloader, softmax_model=classifier,
                                                                 name='lae-dev', label_names=label_names,
                                                                 model_hyper_params={'model_name': model_name, 'dev_perc': dev_perc, 
-                                                                'warmup_steps': warmup_steps, 'replica' = rep})
+                                                                'warmup_steps': warmup_steps, 'replica' : rep})
 
                     # this will write to the same project every time
                     wandb.init(name=model_deets, project='WRI', tags=['baseline', 'training'],
@@ -168,7 +168,7 @@ def grid_search_fine_tune_sbert(train_params, train_sents, train_labels, test_se
                     evaluate_using_sklearn(clf, model, train_sents, train_labels, X_val, y_val,
                            label_names, model_deets, output_path, testing = True)
                     # We use the test set to evaluate the performance using random forest
-                    model_deets_test = model_deets + 
+                    model_deets_test = model_deets + "_test_data"
                     evaluate_using_sklearn(clf, model, train_sents, train_labels, test_sents, test_labels,
                            label_names, model_deets, output_path, testing = True)
 
