@@ -69,7 +69,7 @@ class SoftmaxClassifier(nn.Module):
             return features, output
 
 
-def grid_search_fine_tune_sbert(train_params, train_sents, train_labels, label_names,
+def grid_search_fine_tune_sbert(train_params, train_sents, train_labels, test_sents, test_labels, label_names,
                                 eval_classifier=None):
     """
     Find the optimal SBERT model by doing a hyperparameter search over random seeds, dev percentage, and different types of SBERT models
@@ -98,14 +98,22 @@ def grid_search_fine_tune_sbert(train_params, train_sents, train_labels, label_n
     label2int = dict(zip(label_names, range(len(label_names))))
 
     for dev_perc in all_dev_perc:
+        # split the labelled data set into train an development sets
         X_train, X_dev, y_train, y_dev = train_test_split(train_sents, train_labels, test_size=dev_perc,
                                                           stratify=train_labels, random_state=100)
-        for wup in warmUpSteps:
-            # Load data samples into batches
-            train_batch_size = 16
-            train_samples = build_data_samples(X_train, label2int, y_train)
-            dev_samples = build_data_samples(X_dev, label2int, y_dev)
+        # split again the labelled data set to get a validation set which will be used for classifiation performance
+        X_train_, X_val, y_train_, y_val = train_test_split(train_sents, train_labels, test_size=dev_perc,
+                                                          stratify=train_labels, random_state=10)
 
+        # Load data samples into batches
+        train_batch_size = 16
+        train_samples = build_data_samples(X_train, label2int, y_train)
+        dev_samples = build_data_samples(X_dev, label2int, y_dev)
+
+        # Loop to test several warm up steps. the "wup" variable is the factor by which "len(train_dataset)"" is multiplied
+        for wup in warmUpSteps:
+
+            # Loop to run the model training process several times to explore the optimization landscape
             for rep in range(1, nReplicas + 1)
                 for model_name in model_names:
                     # Train set config
@@ -126,13 +134,14 @@ def grid_search_fine_tune_sbert(train_params, train_sents, train_labels, label_n
                     warmup_steps = math.ceil(
                         len(train_dataset) * wup) #max_num_epochs / train_batch_size * 0.1)  # 10% of train data for warm-up
 
-                    model_deets = f"{train_params['eval_classifier']}_model={model_name}_test-perc={dev_perc}_replica={rep}"
+                    model_deets = f"{train_params['eval_classifier']}_model={model_name}_test-perc={dev_perc}_warmup={wup}_replica={rep}"
 
                     # Train the model
                     start = time.time()
                     dev_evaluator = CustomLabelAccuracyEvaluator(dataloader=dev_dataloader, softmax_model=classifier,
                                                                 name='lae-dev', label_names=label_names,
-                                                                model_hyper_params={'model_name': model_name, 'dev_perc': dev_perc, 'seed': seed})
+                                                                model_hyper_params={'model_name': model_name, 'dev_perc': dev_perc, 
+                                                                'warmup_steps': warmup_steps, 'replica' = rep})
 
                     # this will write to the same project every time
                     wandb.init(name=model_deets, project='WRI', tags=['baseline', 'training'],
@@ -150,6 +159,18 @@ def grid_search_fine_tune_sbert(train_params, train_sents, train_labels, label_n
                             baseline=baseline,
                             patience=patience,
                             )
+                    clf = RandomForestClassifier(n_estimators=500,
+                            max_features=0.06,
+                            n_jobs=6,
+                            random_state=69420)
+                    # We use the validation set to evaluate the performance using random forest
+                    model_deets_val = model_deets + "_validation_data"
+                    evaluate_using_sklearn(clf, model, train_sents, train_labels, X_val, y_val,
+                           label_names, model_deets, output_path, testing = True)
+                    # We use the test set to evaluate the performance using random forest
+                    model_deets_test = model_deets + 
+                    evaluate_using_sklearn(clf, model, train_sents, train_labels, test_sents, test_labels,
+                           label_names, model_deets, output_path, testing = True)
 
                 wandb.save(output_path)
                 wandb.finish()
@@ -222,7 +243,7 @@ def evaluate_using_sbert(model, test_sents, test_labels, label_names,
 
 
 def evaluate_using_sklearn(clf, model, train_sents, train_labels, test_sents, test_labels,
-                           label_names, model_deets, output_path):
+                           label_names, model_deets, output_path=None, testing=False):
     """
     Evaluate an S-BERT model on a previously unseen test set, visualizing the embeddings, confusion matrix,
     and returning. Evaluation method:
@@ -248,9 +269,10 @@ def evaluate_using_sklearn(clf, model, train_sents, train_labels, test_sents, te
 
     print("Visualizing...")
     out_path = f"{output_path}/{model_deets}" if output_path and model_deets else None
-    visualize_embeddings_2D(np.vstack(test_embs), test_labels, tsne_perplexity=50,
-                            output_path=out_path)
-    evaluator.plot_confusion_matrix(color_map='Blues', output_path=out_path)
+    if not testing:
+        visualize_embeddings_2D(np.vstack(test_embs), test_labels, tsne_perplexity=50,
+                                output_path=out_path)
+        evaluator.plot_confusion_matrix(color_map='Blues', output_path=out_path)
     print("Macro/Weighted Avg F1-score:", evaluator.avg_f1.tolist())
 
     return evaluator.avg_f1.tolist()
