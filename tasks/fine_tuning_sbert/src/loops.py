@@ -114,7 +114,7 @@ def grid_search_fine_tune_sbert(train_params, train_sents, train_labels, test_se
         for wup in warmUpSteps:
 
             # Loop to run the model training process several times to explore the optimization landscape
-            for rep in range(1, nReplicas + 1)
+            for rep in range(1, nReplicas + 1):
                 for model_name in model_names:
                     # Train set config
                     model = EarlyStoppingSentenceTransformer(model_name)
