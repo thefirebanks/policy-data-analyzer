@@ -81,6 +81,7 @@ def grid_search_fine_tune_sbert(train_params, train_sents, train_labels, label_n
     baseline = train_params['baseline']
     patience = train_params['patience']
     nReplicas = train_params['replicas']
+    warmUpSteps = train_params['warmup']
     wandb_key = train_params['wandb_key']
     # seeds = train_params['seeds']
 
@@ -99,56 +100,56 @@ def grid_search_fine_tune_sbert(train_params, train_sents, train_labels, label_n
     for dev_perc in all_dev_perc:
         X_train, X_dev, y_train, y_dev = train_test_split(train_sents, train_labels, test_size=dev_perc,
                                                           stratify=train_labels, random_state=100)
+        for wup in warmUpSteps:
+            # Load data samples into batches
+            train_batch_size = 16
+            train_samples = build_data_samples(X_train, label2int, y_train)
+            dev_samples = build_data_samples(X_dev, label2int, y_dev)
 
-        # Load data samples into batches
-        train_batch_size = 16
-        train_samples = build_data_samples(X_train, label2int, y_train)
-        dev_samples = build_data_samples(X_dev, label2int, y_dev)
+            for rep in range(1, nReplicas + 1)
+                for model_name in model_names:
+                    # Train set config
+                    model = EarlyStoppingSentenceTransformer(model_name)
+                    train_dataset = SentencesDataset(train_samples, model=model)
+                    train_dataloader = DataLoader(
+                        train_dataset, shuffle=True, batch_size=train_batch_size)
 
-        for rep in range(1, nReplicas + 1)
-            for model_name in model_names:
-                # Train set config
-                model = EarlyStoppingSentenceTransformer(model_name)
-                train_dataset = SentencesDataset(train_samples, model=model)
-                train_dataloader = DataLoader(
-                    train_dataset, shuffle=True, batch_size=train_batch_size)
+                    # Dev set config
+                    dev_dataset = SentencesDataset(dev_samples, model=model)
+                    dev_dataloader = DataLoader(
+                        dev_dataset, shuffle=True, batch_size=train_batch_size)
 
-                # Dev set config
-                dev_dataset = SentencesDataset(dev_samples, model=model)
-                dev_dataloader = DataLoader(
-                    dev_dataset, shuffle=True, batch_size=train_batch_size)
+                    # Define the way the loss is computed
+                    classifier = SoftmaxClassifier(model=model,
+                                                sentence_embedding_dimension=model.get_sentence_embedding_dimension(),
+                                                num_labels=len(label2int))
+                    warmup_steps = math.ceil(
+                        len(train_dataset) * wup) #max_num_epochs / train_batch_size * 0.1)  # 10% of train data for warm-up
 
-                # Define the way the loss is computed
-                classifier = SoftmaxClassifier(model=model,
-                                            sentence_embedding_dimension=model.get_sentence_embedding_dimension(),
-                                            num_labels=len(label2int))
-                warmup_steps = math.ceil(
-                    len(train_dataset) * max_num_epochs / train_batch_size * 0.1)  # 10% of train data for warm-up
+                    model_deets = f"{train_params['eval_classifier']}_model={model_name}_test-perc={dev_perc}_replica={rep}"
 
-                model_deets = f"{train_params['eval_classifier']}_model={model_name}_test-perc={dev_perc}_replica={rep}"
+                    # Train the model
+                    start = time.time()
+                    dev_evaluator = CustomLabelAccuracyEvaluator(dataloader=dev_dataloader, softmax_model=classifier,
+                                                                name='lae-dev', label_names=label_names,
+                                                                model_hyper_params={'model_name': model_name, 'dev_perc': dev_perc, 'seed': seed})
 
-                # Train the model
-                start = time.time()
-                dev_evaluator = CustomLabelAccuracyEvaluator(dataloader=dev_dataloader, softmax_model=classifier,
-                                                             name='lae-dev', label_names=label_names,
-                                                             model_hyper_params={'model_name': model_name, 'dev_perc': dev_perc, 'seed': seed})
+                    # this will write to the same project every time
+                    wandb.init(name=model_deets, project='WRI', tags=['baseline', 'training'],
+                            entity='ramanshsharma')
 
-                # this will write to the same project every time
-                wandb.init(name=model_deets, project='WRI', tags=['baseline', 'training'],
-                           entity='ramanshsharma')
+                    wandb.watch(model, log='all')
 
-                wandb.watch(model, log='all')
-
-                model.fit(train_objectives=[(train_dataloader, classifier)],
-                          evaluator=dev_evaluator,
-                          epochs=max_num_epochs,
-                          evaluation_steps=1000,
-                          warmup_steps=warmup_steps,
-                          output_path=output_path,
-                          model_deets=model_deets,
-                          baseline=baseline,
-                          patience=patience,
-                          )
+                    model.fit(train_objectives=[(train_dataloader, classifier)],
+                            evaluator=dev_evaluator,
+                            epochs=max_num_epochs,
+                            evaluation_steps=1000,
+                            warmup_steps=warmup_steps,
+                            output_path=output_path,
+                            model_deets=model_deets,
+                            baseline=baseline,
+                            patience=patience,
+                            )
 
                 wandb.save(output_path)
                 wandb.finish()
