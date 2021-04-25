@@ -80,8 +80,9 @@ def grid_search_fine_tune_sbert(train_params, train_sents, train_labels, label_n
     max_num_epochs = train_params["max_num_epochs"]
     baseline = train_params['baseline']
     patience = train_params['patience']
-    seeds = train_params['seeds']
+    nReplicas = train_params['replicas']
     wandb_key = train_params['wandb_key']
+    # seeds = train_params['seeds']
 
     os.environ['WANDB_API_KEY'] = wandb_key
 
@@ -104,28 +105,27 @@ def grid_search_fine_tune_sbert(train_params, train_sents, train_labels, label_n
         train_samples = build_data_samples(X_train, label2int, y_train)
         dev_samples = build_data_samples(X_dev, label2int, y_dev)
 
-        for model_name in model_names:
-            # Train set config
-            model = EarlyStoppingSentenceTransformer(model_name)
-            train_dataset = SentencesDataset(train_samples, model=model)
-            train_dataloader = DataLoader(
-                train_dataset, shuffle=True, batch_size=train_batch_size)
+        for rep in range(1, nReplicas + 1)
+            for model_name in model_names:
+                # Train set config
+                model = EarlyStoppingSentenceTransformer(model_name)
+                train_dataset = SentencesDataset(train_samples, model=model)
+                train_dataloader = DataLoader(
+                    train_dataset, shuffle=True, batch_size=train_batch_size)
 
-            # Dev set config
-            dev_dataset = SentencesDataset(dev_samples, model=model)
-            dev_dataloader = DataLoader(
-                dev_dataset, shuffle=True, batch_size=train_batch_size)
+                # Dev set config
+                dev_dataset = SentencesDataset(dev_samples, model=model)
+                dev_dataloader = DataLoader(
+                    dev_dataset, shuffle=True, batch_size=train_batch_size)
 
-            # Define the way the loss is computed
-            classifier = SoftmaxClassifier(model=model,
-                                           sentence_embedding_dimension=model.get_sentence_embedding_dimension(),
-                                           num_labels=len(label2int))
-            warmup_steps = math.ceil(
-                len(train_dataset) * max_num_epochs / train_batch_size * 0.1)  # 10% of train data for warm-up
+                # Define the way the loss is computed
+                classifier = SoftmaxClassifier(model=model,
+                                            sentence_embedding_dimension=model.get_sentence_embedding_dimension(),
+                                            num_labels=len(label2int))
+                warmup_steps = math.ceil(
+                    len(train_dataset) * max_num_epochs / train_batch_size * 0.1)  # 10% of train data for warm-up
 
-            for seed in seeds:
-                set_seeds(seed)
-                model_deets = f"{train_params['eval_classifier']}_model={model_name}_test-perc={dev_perc}_seed={seed}"
+                model_deets = f"{train_params['eval_classifier']}_model={model_name}_test-perc={dev_perc}_replica={rep}"
 
                 # Train the model
                 start = time.time()
